@@ -7,29 +7,41 @@ from app.storage.mem_store import STORE, Signal
 
 router = APIRouter(prefix="/tv", tags=["TradingView"])
 
+
 class RiskModel(BaseModel):
-    percent: float = Field(..., gt=0, le=10)
+    percent: float = Field(..., ge=0.0, le=10.0)
+
 
 class SLTPModel(BaseModel):
     points: float = Field(..., gt=0)
+
 
 class TVSignal(BaseModel):
     id: str
     strategy: str
     symbol: str
-    action: str
+    action: str  # "BUY" / "SELL"
     risk: RiskModel
     sl: SLTPModel
     tp: SLTPModel
+    token: str | None = None  # <-- IMPORTANTE: token puede venir en el body
+
 
 @router.post("/webhook")
-def receive_signal(payload: TVSignal, x_ev_token: str | None = Header(default=None)):
-    # Auth: token en header (recomendado)
-    if x_ev_token != EV_TV_WEBHOOK_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+def receive_signal(
+    payload: TVSignal,
+    x_ev_token: str | None = Header(default=None, alias="X-EV-Token"),
+):
+    # TradingView normalmente NO manda headers custom.
+    # Por eso aceptamos token por header o por body.
+    provided = (x_ev_token or payload.token or "").strip()
+    expected = (EV_TV_WEBHOOK_TOKEN or "").strip()
 
-    if payload.action not in ["BUY", "SELL", "CLOSE"]:
-        raise HTTPException(status_code=400, detail="Invalid action")
+    if not expected:
+        raise HTTPException(status_code=500, detail="Server misconfigured: EV_TV_WEBHOOK_TOKEN missing")
+
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     s = Signal(
         id=payload.id,
@@ -41,11 +53,6 @@ def receive_signal(payload: TVSignal, x_ev_token: str | None = Header(default=No
         tp_points=float(payload.tp.points),
         created_at=time.time(),
     )
-
     created = STORE.add(s)
 
-    return {
-        "status": "accepted",
-        "created": created,
-        "signal_id": payload.id
-    }
+    return {"status": "accepted", "created": created, "signal_id": s.id}
