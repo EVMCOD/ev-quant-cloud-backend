@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Header, HTTPException
-from app.core import STORE, is_mt5_token_allowed
+from app.storage.mem_store import STORE
+from app.core.core import is_mt5_token_allowed
 
 router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 

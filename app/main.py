@@ -10,27 +10,22 @@ app.include_router(mt5.router)
 def health():
     return {"status": "ok"}
 import os
-from fastapi import Header
 
-@app.get("/debug/env")
-def debug_env():
-    tv = os.getenv("EV_TV_WEBHOOK_TOKEN", "").strip()
-    mt5 = os.getenv("EV_MT5_TOKENS", "").strip()
-    allow_any = os.getenv("EV_ALLOW_ANY_MT5_TOKEN", "").strip()
+def _truthy(v: str) -> bool:
+    return (v or "").strip().lower() in ("1", "true", "yes", "y", "on")
 
-    tokens = [t.strip() for t in mt5.split(",") if t.strip()]
+TV_WEBHOOK_TOKEN = os.getenv("EV_TV_WEBHOOK_TOKEN", "").strip()
+MT5_TOKENS_RAW   = os.getenv("EV_MT5_TOKENS", "").strip()
+ALLOW_ANY_MT5    = _truthy(os.getenv("EV_ALLOW_ANY_MT5_TOKEN", ""))
 
-    return {
-        "has_EV_TV_WEBHOOK_TOKEN": bool(tv),
-        "has_EV_MT5_TOKENS": bool(mt5),
-        "EV_MT5_TOKENS_count": len(tokens),
-        "EV_ALLOW_ANY_MT5_TOKEN": allow_any,
-    }
+def _parse_tokens(raw: str) -> set[str]:
+    # IMPORTANTE: quita espacios para que "token1, token2" funcione igual
+    return {t.strip() for t in (raw or "").replace(";", ",").split(",") if t.strip()}
 
-@app.get("/debug/headers")
-def debug_headers(x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
-    tok = (x_ev_token or "").strip()
-    return {
-        "has_X_EV_Token": bool(tok),
-        "token_len": len(tok),
-    }
+ALLOWED_MT5_TOKENS = _parse_tokens(MT5_TOKENS_RAW)
+
+def is_mt5_token_allowed(token: str) -> bool:
+    if ALLOW_ANY_MT5:
+        return True
+    return token.strip() in ALLOWED_MT5_TOKENS
+
