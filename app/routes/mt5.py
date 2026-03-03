@@ -1,14 +1,20 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-
+from fastapi import APIRouter, Request, HTTPException
 from app.storage.mem_store import STORE
+import os
 
 router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 
-@router.get("/pull")
-def pull_signal():
-    s = STORE.pull_next()
+TOKEN = os.getenv("EV_TV_WEBHOOK_TOKEN", "")
 
+@router.get("/pull")
+async def pull_signal(request: Request, token: str = None):
+    header_token = request.headers.get("X-EV-Token")
+
+    # Accept token from header OR query param
+    if header_token != TOKEN and token != TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    s = STORE.pull_next()
     if not s:
         return {"signal": None}
 
@@ -23,31 +29,3 @@ def pull_signal():
             "tp_points": s.tp_points
         }
     }
-
-class AckPayload(BaseModel):
-    id: str
-    status: str          # FILLED / REJECTED
-    ticket: int | None = None
-    price: float | None = None
-    slippage: float | None = None
-    reason: str | None = None
-
-@router.post("/ack")
-def ack(payload: AckPayload):
-    st = payload.status.upper()
-
-    if st == "FILLED":
-        if payload.ticket is None or payload.price is None:
-            raise HTTPException(status_code=400, detail="FILLED requires ticket and price")
-        ok = STORE.ack_filled(payload.id, payload.ticket, payload.price, payload.slippage)
-        if not ok:
-            raise HTTPException(status_code=404, detail="Signal not found")
-        return {"ok": True}
-
-    if st == "REJECTED":
-        ok = STORE.ack_rejected(payload.id, payload.reason or "UNKNOWN")
-        if not ok:
-            raise HTTPException(status_code=404, detail="Signal not found")
-        return {"ok": True}
-
-    raise HTTPException(status_code=400, detail="Invalid status")
