@@ -1,10 +1,5 @@
 from fastapi import APIRouter, Header, HTTPException
-from app.main import STORE, is_mt5_token_allowed
-
-router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
-
-from fastapi import APIRouter, Header, HTTPException
-from app.main import STORE, is_mt5_token_allowed
+from app.core import STORE, is_mt5_token_allowed
 
 router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 
@@ -38,7 +33,7 @@ def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token"
 
 @router.post("/ack")
 def ack(payload: dict, x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
-    if not x_ev_token or not is_mt5_token_allowed(x_ev_token):
+    token = (x_ev_token or "").strip()
+    if not token or not is_mt5_token_allowed(token):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return {"status": "ok"}
-
