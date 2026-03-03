@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 import time
 
+
 @dataclass
 class Signal:
     id: str
@@ -14,7 +15,7 @@ class Signal:
     tp_points: float
     created_at: float
 
-    status: str = "PENDING"   # PENDING/DELIVERED/FILLED/REJECTED
+    status: str = "PENDING"   # PENDING / DELIVERED / FILLED / REJECTED
     delivered_at: Optional[float] = None
 
     # Execution feedback
@@ -24,11 +25,13 @@ class Signal:
     reject_reason: Optional[str] = None
     closed_at: Optional[float] = None  # time of ack
 
+
 class MemStore:
     def __init__(self):
         self._signals: Dict[str, Signal] = {}
         self._queue: List[str] = []
 
+    # Add new signal
     def add(self, s: Signal) -> bool:
         if s.id in self._signals:
             return False
@@ -36,6 +39,7 @@ class MemStore:
         self._queue.append(s.id)
         return True
 
+    # Pull next pending signal (global queue)
     def pull_next(self) -> Optional[Signal]:
         for sid in list(self._queue):
             s = self._signals.get(sid)
@@ -43,15 +47,25 @@ class MemStore:
                 continue
             if s.status != "PENDING":
                 continue
+
             s.status = "DELIVERED"
             s.delivered_at = time.time()
             return s
+
         return None
 
+    # MT5-compatible wrapper (current version = shared queue)
+    def pull_next_for_token(self, token: str) -> Optional[Signal]:
+        # Token validation happens in mt5 route.
+        # For now all tokens share the same queue.
+        return self.pull_next()
+
+    # Execution acknowledgements
     def ack_filled(self, signal_id: str, ticket: int, price: float, slippage: float | None):
         s = self._signals.get(signal_id)
         if not s:
             return False
+
         s.status = "FILLED"
         s.ticket = int(ticket)
         s.fill_price = float(price)
@@ -63,9 +77,11 @@ class MemStore:
         s = self._signals.get(signal_id)
         if not s:
             return False
+
         s.status = "REJECTED"
         s.reject_reason = reason or "UNKNOWN"
         s.closed_at = time.time()
         return True
+
 
 STORE = MemStore()
