@@ -1,0 +1,1 @@
+from .core import is_mt5_token_allowed
