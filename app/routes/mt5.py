@@ -1,20 +1,25 @@
-from fastapi import APIRouter, Request, HTTPException
-from app.storage.mem_store import STORE
-import os
+from fastapi import APIRouter, Header, HTTPException
+from app.main import STORE, is_mt5_token_allowed
 
 router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 
-TOKEN = os.getenv("EV_TV_WEBHOOK_TOKEN", "")
+from fastapi import APIRouter, Header, HTTPException
+from app.main import STORE, is_mt5_token_allowed
+
+router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 
 @router.get("/pull")
-async def pull_signal(request: Request, token: str = None):
-    header_token = request.headers.get("X-EV-Token")
-
-    # Accept token from header OR query param
-    if header_token != TOKEN and token != TOKEN:
+def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
+    if not x_ev_token:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    s = STORE.pull_next()
+    token = x_ev_token.strip()
+
+    if not is_mt5_token_allowed(token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    s = STORE.pull_next_for_token(token)
+
     if not s:
         return {"signal": None}
 
@@ -26,6 +31,14 @@ async def pull_signal(request: Request, token: str = None):
             "action": s.action,
             "risk_percent": s.risk_percent,
             "sl_points": s.sl_points,
-            "tp_points": s.tp_points
+            "tp_points": s.tp_points,
+            "seq": s.seq
         }
     }
+
+@router.post("/ack")
+def ack(payload: dict, x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
+    if not x_ev_token or not is_mt5_token_allowed(x_ev_token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"status": "ok"}
+
