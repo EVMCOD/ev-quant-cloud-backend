@@ -18,12 +18,7 @@ def _auth_token(x_ev_token: Optional[str]) -> str:
 def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
     token = _auth_token(x_ev_token)
 
-    # broadcast per token if available
-    if hasattr(STORE, "pull_next_for_token"):
-        s = STORE.pull_next_for_token(token)
-    else:
-        s = STORE.pull_next()
-
+    s = STORE.pull_next_for_token(token)
     if not s:
         return {"signal": None}
 
@@ -45,7 +40,7 @@ async def ack(
     request: Request,
     x_ev_token: str | None = Header(default=None, alias="X-EV-Token"),
 ):
-    token = _auth_token(x_ev_token)
+    _ = _auth_token(x_ev_token)
 
     try:
         payload: Dict[str, Any] = await request.json()
@@ -57,33 +52,24 @@ async def ack(
         raise HTTPException(status_code=400, detail="Missing id")
 
     status = str(payload.get("status") or "").upper().strip()
-
-    # normalize
     ticket = payload.get("ticket", 0) or 0
     price = payload.get("price", payload.get("fill_price", 0.0)) or 0.0
     slippage = payload.get("slippage", None)
     reason = payload.get("reason", payload.get("reject_reason", "UNKNOWN")) or "UNKNOWN"
     retcode = payload.get("retcode", None)
 
-    # IMPORTANT: never crash on ack
+    # never 500
     try:
         if status == "FILLED":
-            if hasattr(STORE, "ack_filled_for_token"):
-                ok = STORE.ack_filled_for_token(token, signal_id, int(ticket), float(price), slippage)
-            else:
-                ok = STORE.ack_filled(signal_id, int(ticket), float(price), slippage)
+            ok = STORE.ack_filled(signal_id, int(ticket), float(price), slippage)
             return {"status": "ok", "updated": bool(ok)}
 
         if status == "REJECTED":
             if retcode is not None:
                 reason = f"{reason} (retcode={retcode})"
-            if hasattr(STORE, "ack_rejected_for_token"):
-                ok = STORE.ack_rejected_for_token(token, signal_id, str(reason))
-            else:
-                ok = STORE.ack_rejected(signal_id, str(reason))
+            ok = STORE.ack_rejected(signal_id, str(reason))
             return {"status": "ok", "updated": bool(ok)}
     except Exception:
-        # swallow any store error, never 500
         return {"status": "ok", "updated": False}
 
     return {"status": "ok", "updated": False}

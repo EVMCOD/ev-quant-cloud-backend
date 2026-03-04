@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 import time
 
-
 @dataclass
 class Signal:
     id: str
@@ -15,18 +14,18 @@ class Signal:
     tp_points: float
     created_at: float
 
-    status: str = "PENDING"  # PENDING/DELIVERED/FILLED/REJECTED
+    status: str = "PENDING"   # PENDING / DELIVERED / FILLED / REJECTED
     delivered_at: Optional[float] = None
 
-    # IMPORTANT: allow broadcast per token
+    # ✅ Broadcast: track delivery PER TOKEN
     delivered_to: Set[str] = field(default_factory=set)
 
-    # Execution feedback
+    # Execution feedback (optional)
     ticket: Optional[int] = None
     fill_price: Optional[float] = None
     slippage: Optional[float] = None
     reject_reason: Optional[str] = None
-    closed_at: Optional[float] = None  # time of ack
+    closed_at: Optional[float] = None
 
 
 class MemStore:
@@ -41,7 +40,7 @@ class MemStore:
         self._queue.append(s.id)
         return True
 
-    # ✅ deliver once per token (broadcast)
+    # ✅ Deliver once per token
     def pull_next_for_token(self, token: str) -> Optional[Signal]:
         token = (token or "").strip()
         if not token:
@@ -52,11 +51,7 @@ class MemStore:
             if not s:
                 continue
 
-            # only pending signals are deliverable
-            if s.status not in ("PENDING", "DELIVERED"):
-                continue
-
-            # already delivered to this token -> skip
+            # already delivered to this token?
             if token in s.delivered_to:
                 continue
 
@@ -67,6 +62,10 @@ class MemStore:
             return s
 
         return None
+
+    # Keep for compatibility (single consumer)
+    def pull_next(self) -> Optional[Signal]:
+        return self.pull_next_for_token("__single__")
 
     def ack_filled(self, signal_id: str, ticket: int, price: float, slippage: float | None):
         s = self._signals.get(signal_id)
