@@ -1,17 +1,29 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
+from typing import Any, Dict, Optional
+
 from app.storage.mem_store import STORE
 from app.core import is_mt5_token_allowed
 
 router = APIRouter(prefix="/mt5", tags=["MT5 Bridge"])
 
 
-@router.get("/pull")
-def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
+def _auth_token(x_ev_token: Optional[str]) -> str:
     token = (x_ev_token or "").strip()
     if not token or not is_mt5_token_allowed(token):
         raise HTTPException(status_code=401, detail="Unauthorized")
+    return token
 
-    s = STORE.pull_next_for_token(token)
+
+@router.get("/pull")
+def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
+    token = _auth_token(x_ev_token)
+
+    # broadcast per token if available
+    if hasattr(STORE, "pull_next_for_token"):
+        s = STORE.pull_next_for_token(token)
+    else:
+        s = STORE.pull_next()
+
     if not s:
         return {"signal": None}
 
@@ -29,10 +41,16 @@ def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token"
 
 
 @router.post("/ack")
-def ack(payload: dict, x_ev_token: str | None = Header(default=None, alias="X-EV-Token")):
-    token = (x_ev_token or "").strip()
-    if not token or not is_mt5_token_allowed(token):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def ack(
+    request: Request,
+    x_ev_token: str | None = Header(default=None, alias="X-EV-Token"),
+):
+    token = _auth_token(x_ev_token)
+
+    try:
+        payload: Dict[str, Any] = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
     signal_id = str(payload.get("id") or payload.get("signal_id") or "").strip()
     if not signal_id:
@@ -40,22 +58,32 @@ def ack(payload: dict, x_ev_token: str | None = Header(default=None, alias="X-EV
 
     status = str(payload.get("status") or "").upper().strip()
 
-    if status == "FILLED":
-        ok = STORE.ack_filled_for_token(
-            token=token,
-            signal_id=signal_id,
-            ticket=int(payload.get("ticket", 0)),
-            price=float(payload.get("price", 0.0)),
-            slippage=payload.get("slippage", None),
-        )
-        return {"ok": bool(ok)}
+    # normalize
+    ticket = payload.get("ticket", 0) or 0
+    price = payload.get("price", payload.get("fill_price", 0.0)) or 0.0
+    slippage = payload.get("slippage", None)
+    reason = payload.get("reason", payload.get("reject_reason", "UNKNOWN")) or "UNKNOWN"
+    retcode = payload.get("retcode", None)
 
-    if status == "REJECTED":
-        ok = STORE.ack_rejected_for_token(
-            token=token,
-            signal_id=signal_id,
-            reason=str(payload.get("reason", "UNKNOWN")),
-        )
-        return {"ok": bool(ok)}
+    # IMPORTANT: never crash on ack
+    try:
+        if status == "FILLED":
+            if hasattr(STORE, "ack_filled_for_token"):
+                ok = STORE.ack_filled_for_token(token, signal_id, int(ticket), float(price), slippage)
+            else:
+                ok = STORE.ack_filled(signal_id, int(ticket), float(price), slippage)
+            return {"status": "ok", "updated": bool(ok)}
 
-    return {"ok": True}
+        if status == "REJECTED":
+            if retcode is not None:
+                reason = f"{reason} (retcode={retcode})"
+            if hasattr(STORE, "ack_rejected_for_token"):
+                ok = STORE.ack_rejected_for_token(token, signal_id, str(reason))
+            else:
+                ok = STORE.ack_rejected(signal_id, str(reason))
+            return {"status": "ok", "updated": bool(ok)}
+    except Exception:
+        # swallow any store error, never 500
+        return {"status": "ok", "updated": False}
+
+    return {"status": "ok", "updated": False}
