@@ -28,8 +28,7 @@ def pull_signal(x_ev_token: str | None = Header(default=None, alias="X-EV-Token"
             "risk_percent": s.risk_percent,
             "sl_points": s.sl_points,
             "tp_points": s.tp_points,
-            "seq": s.seq
-        }
+ }
     }
 
 @router.post("/ack")
