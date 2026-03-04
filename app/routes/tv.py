@@ -56,3 +56,14 @@ def receive_signal(
     created = STORE.add(s)
 
     return {"status": "accepted", "created": created, "signal_id": s.id}
+import os
+from fastapi import APIRouter
+
+@router.get("/debug_token")
+def debug_token():
+    expected = (os.getenv("EV_TV_WEBHOOK_TOKEN", "") or "").strip()
+    return {
+        "expected_len": len(expected),
+        "expected_head4": expected[:4],
+        "expected_tail4": expected[-4:] if len(expected) >= 4 else expected,
+    }
