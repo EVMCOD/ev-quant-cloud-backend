@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -251,6 +251,7 @@ def _ingest_signal(payload: TVSignal, db: Session) -> dict:
 
 @router.post("/tv/send_probe", status_code=200)
 def send_probe(
+    run_id: str = Query(default="01", description="Suffix appended to signal IDs; change each run to avoid duplicate skips"),
     _: None = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
@@ -258,11 +259,13 @@ def send_probe(
     Ingest two hardcoded test signals without needing EV_TV_WEBHOOK_TOKEN.
     Protected by EV_ADMIN_TOKEN (X-EV-Token header).
 
-    Signal 1 – targeted:  probe_tgt_01  XAUUSD BUY  → only tokenCuenta1
-    Signal 2 – broadcast: probe_bc_01   EURUSD SELL → all active accounts
+    Pass ?run_id=XX to create fresh IDs (avoids 'duplicate' no-ops).
+
+    Signal 1 – targeted:  probe_tgt_{run_id}  XAUUSD BUY  → only tokenCuenta1
+    Signal 2 – broadcast: probe_bc_{run_id}   EURUSD SELL → all active accounts
     """
     probe_target = TVSignal(
-        id="probe_tgt_01",
+        id=f"probe_tgt_{run_id}",
         strategy="AdminProbe",
         symbol="XAUUSD",
         action="BUY",
@@ -273,7 +276,7 @@ def send_probe(
     )
 
     probe_broadcast = TVSignal(
-        id="probe_bc_01",
+        id=f"probe_bc_{run_id}",
         strategy="AdminProbe",
         symbol="EURUSD",
         action="SELL",
@@ -287,6 +290,6 @@ def send_probe(
 
     return {
         "ok": True,
-        "probe_tgt_01": result_target,
-        "probe_bc_01": result_broadcast,
+        f"probe_tgt_{run_id}": result_target,
+        f"probe_bc_{run_id}": result_broadcast,
     }
