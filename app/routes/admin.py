@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -8,7 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import EV_ADMIN_TOKEN
 from app.db.database import get_db
-from app.db.models import Account, Group, GroupMember
+from app.db.models import Account, Group, GroupMember, Signal
+from app.routes.tv import RiskModel, SLTPModel, TVSignal, _create_deliveries, _resolve_account_ids
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -205,3 +207,86 @@ def delete_group(
     db.delete(g)
     db.commit()
     return {"deleted": name}
+
+
+# ---------------------------------------------------------------------------
+# Admin probe: send test signals without exposing EV_TV_WEBHOOK_TOKEN
+# ---------------------------------------------------------------------------
+
+def _ingest_signal(payload: TVSignal, db: Session) -> dict:
+    """
+    Shared ingestion logic (same as /tv/webhook but token auth already done).
+    Returns a summary dict.
+    """
+    if db.get(Signal, payload.id):
+        return {"signal_id": payload.id, "created": False, "deliveries": 0, "routing": "duplicate"}
+
+    account_ids = _resolve_account_ids(payload, db)
+    is_broadcast = account_ids is None
+
+    sig = Signal(
+        id=payload.id,
+        strategy=payload.strategy,
+        symbol=payload.symbol,
+        action=payload.action,
+        risk_percent=float(payload.risk.percent),
+        sl_points=float(payload.sl.points),
+        tp_points=float(payload.tp.points),
+        is_broadcast=is_broadcast,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(sig)
+    db.flush()
+
+    count = _create_deliveries(sig, account_ids, db)
+    db.commit()
+
+    return {
+        "signal_id": sig.id,
+        "created": True,
+        "deliveries": count,
+        "routing": "broadcast" if is_broadcast else "targeted",
+    }
+
+
+@router.post("/tv/send_probe", status_code=200)
+def send_probe(
+    _: None = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest two hardcoded test signals without needing EV_TV_WEBHOOK_TOKEN.
+    Protected by EV_ADMIN_TOKEN (X-EV-Token header).
+
+    Signal 1 – targeted:  probe_tgt_01  XAUUSD BUY  → only tokenCuenta1
+    Signal 2 – broadcast: probe_bc_01   EURUSD SELL → all active accounts
+    """
+    probe_target = TVSignal(
+        id="probe_tgt_01",
+        strategy="AdminProbe",
+        symbol="XAUUSD",
+        action="BUY",
+        risk=RiskModel(percent=1.0),
+        sl=SLTPModel(points=200),
+        tp=SLTPModel(points=400),
+        target="tokenCuenta1",
+    )
+
+    probe_broadcast = TVSignal(
+        id="probe_bc_01",
+        strategy="AdminProbe",
+        symbol="EURUSD",
+        action="SELL",
+        risk=RiskModel(percent=1.0),
+        sl=SLTPModel(points=100),
+        tp=SLTPModel(points=200),
+    )
+
+    result_target = _ingest_signal(probe_target, db)
+    result_broadcast = _ingest_signal(probe_broadcast, db)
+
+    return {
+        "ok": True,
+        "probe_tgt_01": result_target,
+        "probe_bc_01": result_broadcast,
+    }
