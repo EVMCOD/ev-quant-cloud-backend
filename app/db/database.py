@@ -1,8 +1,23 @@
-import os
+import logging
+from urllib.parse import urlparse
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/evquant")
+# Import from config so the fail-fast check happens at import time.
+# If DATABASE_URL is missing, startup aborts here with a clear message.
+from app.core.config import DATABASE_URL
+
+log = logging.getLogger(__name__)
+
+# Log host/port/dbname for diagnostics — never log credentials.
+_u = urlparse(DATABASE_URL)
+log.info(
+    "DB config: host=%s port=%s dbname=%s",
+    _u.hostname,
+    _u.port or 5432,
+    (_u.path or "").lstrip("/"),
+)
 
 engine = create_engine(
     DATABASE_URL,
@@ -24,6 +39,7 @@ def get_db():
 
 
 def init_db():
-    # import models so Base knows about all tables
+    # Import models so Base knows about all tables before create_all.
     from app.db import models  # noqa: F401
+    log.info("Running create_all (idempotent)")
     Base.metadata.create_all(bind=engine)
